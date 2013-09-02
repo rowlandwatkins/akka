@@ -9,14 +9,11 @@ import scala.collection.immutable
 import scala.concurrent.duration._
 import scala.concurrent.forkjoin.ThreadLocalRandom
 import scala.util.control.NonFatal
-import akka.actor.{ Actor, ActorLogging, ActorRef, Address, Cancellable, Props, PoisonPill, ReceiveTimeout, RootActorPath, Scheduler }
-import akka.actor.OneForOneStrategy
+import akka.actor._
 import akka.actor.SupervisorStrategy.Stop
 import akka.cluster.MemberStatus._
 import akka.cluster.ClusterEvent._
-import akka.actor.ActorSelection
 import akka.dispatch.{ UnboundedMessageQueueSemantics, RequiresMessageQueue }
-import akka.actor.Deploy
 
 /**
  * Base trait for all cluster messages. All ClusterMessage's are serializable.
@@ -132,7 +129,7 @@ private[cluster] object InternalClusterAction {
    * Comand to [[akka.cluster.ClusterDaemon]] to create a
    * [[akka.cluster.OnMemberUpListener]].
    */
-  case class AddOnMemberUpListener(callback: Runnable)
+  case class AddOnMemberUpListener(callback: Runnable) extends NoSerializationVerificationNeeded
 
   sealed trait SubscriptionMessage
   case class Subscribe(subscriber: ActorRef, to: Class[_]) extends SubscriptionMessage
@@ -549,7 +546,7 @@ private[cluster] class ClusterCoreDaemon(publisher: ActorRef) extends Actor with
     if (latestGossip.overview.unreachable.exists(_.uniqueAddress == from))
       logInfo("Ignoring received gossip status from unreachable [{}] ", from)
     else if (latestGossip.members.forall(_.uniqueAddress != from))
-      logInfo("Ignoring received gossip status from unknown [{}]", from)
+      log.debug("Cluster Node [{}] - Ignoring received gossip status from unknown [{}]", selfAddress, from)
     else {
       (status.version compareTo latestGossip.version) match {
         case VectorClock.Same  ⇒ // same version
@@ -587,7 +584,7 @@ private[cluster] class ClusterCoreDaemon(publisher: ActorRef) extends Actor with
       logInfo("Ignoring received gossip from unreachable [{}] ", from)
       Ignored
     } else if (localGossip.members.forall(_.uniqueAddress != from)) {
-      logInfo("Ignoring received gossip from unknown [{}]", from)
+      log.debug("Cluster Node [{}] - Ignoring received gossip from unknown [{}]", selfAddress, from)
       Ignored
     } else if (remoteGossip.members.forall(_.uniqueAddress != selfUniqueAddress)) {
       logInfo("Ignoring received gossip that does not contain myself, from [{}]", from)

@@ -24,6 +24,7 @@ import akka.dispatch.{ RequiresMessageQueue, UnboundedMessageQueueSemantics }
  */
 private[akka] object RemoteActorRefProvider {
   private case class Internals(transport: RemoteTransport, serialization: Serialization, remoteDaemon: InternalActorRef)
+    extends NoSerializationVerificationNeeded
 
   sealed trait TerminatorState
   case object Uninitialized extends TerminatorState
@@ -155,7 +156,9 @@ private[akka] class RemoteActorRefProvider(
   def init(system: ActorSystemImpl): Unit = {
     local.init(system)
 
-    remotingTerminator = system.systemActorOf(Props(classOf[RemotingTerminator], local.systemGuardian), "remoting-terminator")
+    remotingTerminator = system.systemActorOf(
+      remoteSettings.configureDispatcher(Props(classOf[RemotingTerminator], local.systemGuardian)),
+      "remoting-terminator")
 
     val internals = Internals(
       remoteDaemon = {
@@ -187,11 +190,13 @@ private[akka] class RemoteActorRefProvider(
   protected def createRemoteWatcher(system: ActorSystemImpl): ActorRef = {
     import remoteSettings._
     val failureDetector = createRemoteWatcherFailureDetector(system)
-    system.systemActorOf(RemoteWatcher.props(
-      failureDetector,
-      heartbeatInterval = WatchHeartBeatInterval,
-      unreachableReaperInterval = WatchUnreachableReaperInterval,
-      heartbeatExpectedResponseAfter = WatchHeartbeatExpectedResponseAfter),
+    system.systemActorOf(
+      configureDispatcher(
+        RemoteWatcher.props(
+          failureDetector,
+          heartbeatInterval = WatchHeartBeatInterval,
+          unreachableReaperInterval = WatchUnreachableReaperInterval,
+          heartbeatExpectedResponseAfter = WatchHeartbeatExpectedResponseAfter)),
       "remote-watcher")
   }
 
@@ -203,7 +208,7 @@ private[akka] class RemoteActorRefProvider(
   }
 
   protected def createRemoteDeploymentWatcher(system: ActorSystemImpl): ActorRef =
-    system.systemActorOf(Props[RemoteDeploymentWatcher], "remote-deployment-watcher")
+    system.systemActorOf(remoteSettings.configureDispatcher(Props[RemoteDeploymentWatcher]), "remote-deployment-watcher")
 
   def actorOf(system: ActorSystemImpl, props: Props, supervisor: InternalActorRef, path: ActorPath,
               systemService: Boolean, deploy: Option[Deploy], lookupDeploy: Boolean, async: Boolean): InternalActorRef =

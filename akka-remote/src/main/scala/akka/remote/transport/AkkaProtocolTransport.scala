@@ -91,7 +91,7 @@ private[remote] class AkkaProtocolTransport(
   protected def managerProps = {
     val wt = wrappedTransport
     val s = settings
-    Props(classOf[AkkaProtocolManager], wt, s)
+    Props(classOf[AkkaProtocolManager], wt, s).withDeploy(Deploy.local)
   }
 }
 
@@ -115,27 +115,27 @@ private[transport] class AkkaProtocolManager(
       val stateActorAssociationHandler = associationListener
       val stateActorSettings = settings
       val failureDetector = createTransportFailureDetector()
-      context.actorOf(Props(classOf[ProtocolStateActor],
+      context.actorOf(RARP(context.system).configureDispatcher(Props(classOf[ProtocolStateActor],
         HandshakeInfo(stateActorLocalAddress, AddressUidExtension(context.system).addressUid, stateActorSettings.SecureCookie),
         handle,
         stateActorAssociationHandler,
         stateActorSettings,
         AkkaPduProtobufCodec,
-        failureDetector).withDeploy(Deploy.local), actorNameFor(handle.remoteAddress))
+        failureDetector)).withDeploy(Deploy.local), actorNameFor(handle.remoteAddress))
 
     case AssociateUnderlying(remoteAddress, statusPromise) ⇒
       val stateActorLocalAddress = localAddress
       val stateActorSettings = settings
       val stateActorWrappedTransport = wrappedTransport
       val failureDetector = createTransportFailureDetector()
-      context.actorOf(Props(classOf[ProtocolStateActor],
+      context.actorOf(RARP(context.system).configureDispatcher(Props(classOf[ProtocolStateActor],
         HandshakeInfo(stateActorLocalAddress, AddressUidExtension(context.system).addressUid, stateActorSettings.SecureCookie),
         remoteAddress,
         statusPromise,
         stateActorWrappedTransport,
         stateActorSettings,
         AkkaPduProtobufCodec,
-        failureDetector).withDeploy(Deploy.local), actorNameFor(remoteAddress))
+        failureDetector)).withDeploy(Deploy.local), actorNameFor(remoteAddress))
   }
 
   private def createTransportFailureDetector(): FailureDetector =
@@ -185,9 +185,11 @@ private[transport] object ProtocolStateActor {
    */
   case object Open extends AssociationState
 
-  case object HeartbeatTimer
+  case object HeartbeatTimer extends NoSerializationVerificationNeeded
 
-  case class HandleListenerRegistered(listener: HandleEventListener)
+  case class Handle(handle: AssociationHandle) extends NoSerializationVerificationNeeded
+
+  case class HandleListenerRegistered(listener: HandleEventListener) extends NoSerializationVerificationNeeded
 
   sealed trait ProtocolStateData
   trait InitialProtocolStateData extends ProtocolStateData
@@ -251,7 +253,7 @@ private[transport] class ProtocolStateActor(initialData: InitialProtocolStateDat
 
   initialData match {
     case d: OutboundUnassociated ⇒
-      d.transport.associate(d.remoteAddress) pipeTo self
+      d.transport.associate(d.remoteAddress).map(Handle(_)) pipeTo self
       startWith(Closed, d)
 
     case d: InboundUnassociated ⇒
@@ -266,7 +268,7 @@ private[transport] class ProtocolStateActor(initialData: InitialProtocolStateDat
       statusPromise.failure(e)
       stop()
 
-    case Event(wrappedHandle: AssociationHandle, OutboundUnassociated(_, statusPromise, _)) ⇒
+    case Event(Handle(wrappedHandle), OutboundUnassociated(_, statusPromise, _)) ⇒
       wrappedHandle.readHandlerPromise.trySuccess(ActorHandleEventListener(self))
       if (sendAssociate(wrappedHandle, localHandshakeInfo)) {
         failureDetector.heartbeat()
@@ -275,7 +277,7 @@ private[transport] class ProtocolStateActor(initialData: InitialProtocolStateDat
 
       } else {
         // Underlying transport was busy -- Associate could not be sent
-        setTimer("associate-retry", wrappedHandle, RARP(context.system).provider.remoteSettings.BackoffPeriod, repeat = false)
+        setTimer("associate-retry", Handle(wrappedHandle), RARP(context.system).provider.remoteSettings.BackoffPeriod, repeat = false)
         stay()
       }
 

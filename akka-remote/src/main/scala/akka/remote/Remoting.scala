@@ -35,7 +35,9 @@ private[remote] object AddressUrlEncoder {
 /**
  * INTERNAL API
  */
-private[remote] case class RARP(provider: RemoteActorRefProvider) extends Extension
+private[remote] case class RARP(provider: RemoteActorRefProvider) extends Extension {
+  def configureDispatcher(props: Props): Props = provider.remoteSettings.configureDispatcher(props)
+}
 /**
  * INTERNAL API
  */
@@ -81,7 +83,7 @@ private[remote] object Remoting {
     }
   }
 
-  case class RegisterTransportActor(props: Props, name: String)
+  case class RegisterTransportActor(props: Props, name: String) extends NoSerializationVerificationNeeded
 
   private[Remoting] class TransportSupervisor extends Actor with RequiresMessageQueue[UnboundedMessageQueueSemantics] {
     override def supervisorStrategy = OneForOneStrategy() {
@@ -89,7 +91,10 @@ private[remote] object Remoting {
     }
 
     def receive = {
-      case RegisterTransportActor(props, name) ⇒ sender ! context.actorOf(props.withDeploy(Deploy.local), name)
+      case RegisterTransportActor(props, name) ⇒
+        sender ! context.actorOf(
+          RARP(context.system).configureDispatcher(props.withDeploy(Deploy.local)),
+          name)
     }
   }
 
@@ -111,12 +116,14 @@ private[remote] class Remoting(_system: ExtendedActorSystem, _provider: RemoteAc
 
   import provider.remoteSettings._
 
-  val transportSupervisor = system.asInstanceOf[ActorSystemImpl].systemActorOf(Props[TransportSupervisor], "transports")
+  val transportSupervisor = system.asInstanceOf[ActorSystemImpl].systemActorOf(
+    configureDispatcher(Props[TransportSupervisor]),
+    "transports")
 
   override def localAddressForRemote(remote: Address): Address = Remoting.localAddressForRemote(transportMapping, remote)
 
   val log: LoggingAdapter = Logging(system.eventStream, "Remoting")
-  val eventPublisher = new EventPublisher(system, log, LogRemoteLifecycleEvents)
+  val eventPublisher = new EventPublisher(system, log, RemoteLifecycleEventsLogLevel)
 
   private def notifyError(msg: String, cause: Throwable): Unit =
     eventPublisher.notifyListeners(RemotingErrorEvent(new RemoteTransportException(msg, cause)))
@@ -155,7 +162,8 @@ private[remote] class Remoting(_system: ExtendedActorSystem, _provider: RemoteAc
       case None ⇒
         log.info("Starting remoting")
         val manager: ActorRef = system.asInstanceOf[ActorSystemImpl].systemActorOf(
-          Props(classOf[EndpointManager], provider.remoteSettings.config, log).withDeploy(Deploy.local), Remoting.EndpointManagerName)
+          configureDispatcher(Props(classOf[EndpointManager], provider.remoteSettings.config, log)).withDeploy(Deploy.local),
+          Remoting.EndpointManagerName)
         endpointManager = Some(manager)
 
         try {
@@ -225,7 +233,7 @@ private[remote] class Remoting(_system: ExtendedActorSystem, _provider: RemoteAc
 private[remote] object EndpointManager {
 
   // Messages between Remoting and EndpointManager
-  sealed trait RemotingCommand
+  sealed trait RemotingCommand extends NoSerializationVerificationNeeded
   case class Listen(addressesPromise: Promise[Seq[(Transport, Address)]]) extends RemotingCommand
   case object StartupFinished extends RemotingCommand
   case object ShutdownAndFlush extends RemotingCommand
@@ -242,13 +250,17 @@ private[remote] object EndpointManager {
   case class ManagementCommandAck(status: Boolean)
 
   // Messages internal to EndpointManager
-  case object Prune
+  case object Prune extends NoSerializationVerificationNeeded
   case class ListensResult(addressesPromise: Promise[Seq[(Transport, Address)]],
                            results: Seq[(Transport, Address, Promise[AssociationEventListener])])
+    extends NoSerializationVerificationNeeded
   case class ListensFailure(addressesPromise: Promise[Seq[(Transport, Address)]], cause: Throwable)
+    extends NoSerializationVerificationNeeded
 
   // Helper class to store address pairs
   case class Link(localAddress: Address, remoteAddress: Address)
+
+  case class ResendState(uid: Int, buffer: AckedReceiveBuffer[Message])
 
   sealed trait EndpointPolicy {
 
@@ -360,7 +372,7 @@ private[remote] class EndpointManager(conf: Config, log: LoggingAdapter) extends
   val extendedSystem = context.system.asInstanceOf[ExtendedActorSystem]
   val endpointId: Iterator[Int] = Iterator from 0
 
-  val eventPublisher = new EventPublisher(context.system, log, settings.LogRemoteLifecycleEvents)
+  val eventPublisher = new EventPublisher(context.system, log, settings.RemoteLifecycleEventsLogLevel)
 
   // Mapping between addresses and endpoint actors. If passive connections are turned off, incoming connections
   // will be not part of this map!
@@ -379,7 +391,7 @@ private[remote] class EndpointManager(conf: Config, log: LoggingAdapter) extends
   override val supervisorStrategy =
     OneForOneStrategy(loggingEnabled = false) {
       case InvalidAssociation(localAddress, remoteAddress, _) ⇒
-        log.error("Tried to associate with unreachable remote address [{}]. " +
+        log.warning("Tried to associate with unreachable remote address [{}]. " +
           "Address is now quarantined, all messages to this address will be delivered to dead letters.", remoteAddress)
         endpoints.markAsFailed(sender, Deadline.now + settings.UnknownAddressGateClosedFor)
         context.system.eventStream.publish(AddressTerminated(remoteAddress))
@@ -388,7 +400,7 @@ private[remote] class EndpointManager(conf: Config, log: LoggingAdapter) extends
       case HopelessAssociation(localAddress, remoteAddress, Some(uid), _) ⇒
         settings.QuarantineDuration match {
           case d: FiniteDuration ⇒
-            log.error("Association to [{}] having UID [{}] is irrecoverably failed. UID is now quarantined and all " +
+            log.warning("Association to [{}] having UID [{}] is irrecoverably failed. UID is now quarantined and all " +
               "messages to this UID will be delivered to dead letters. Remote actorsystem must be restarted to recover " +
               "from this situation.", remoteAddress, uid)
             endpoints.markAsQuarantined(remoteAddress, uid, Deadline.now + d)
@@ -400,7 +412,7 @@ private[remote] class EndpointManager(conf: Config, log: LoggingAdapter) extends
       case HopelessAssociation(localAddress, remoteAddress, None, _) ⇒
         settings.QuarantineDuration match {
           case d: FiniteDuration ⇒
-            log.error("Association to [{}] with unknown UID is irrecoverably failed. " +
+            log.warning("Association to [{}] with unknown UID is irrecoverably failed. " +
               "Address is now quarantined, all messages to this address will be delivered to dead letters.", remoteAddress)
             endpoints.markAsFailed(sender, Deadline.now + d)
           case _ ⇒
@@ -421,7 +433,7 @@ private[remote] class EndpointManager(conf: Config, log: LoggingAdapter) extends
     }
 
   // Structure for saving reliable delivery state across restarts of Endpoints
-  val receiveBuffers = new ConcurrentHashMap[Link, AckedReceiveBuffer[Message]]()
+  val receiveBuffers = new ConcurrentHashMap[Link, ResendState]()
 
   def receive = {
     case Listen(addressesPromise) ⇒
@@ -648,16 +660,16 @@ private[remote] class EndpointManager(conf: Config, log: LoggingAdapter) extends
                              writing: Boolean): ActorRef = {
     assert(transportMapping contains localAddress)
 
-    if (writing) context.watch(context.actorOf(ReliableDeliverySupervisor.props(
+    if (writing) context.watch(context.actorOf(RARP(extendedSystem).configureDispatcher(ReliableDeliverySupervisor.props(
       handleOption,
       localAddress,
       remoteAddress,
       transport,
       endpointSettings,
       AkkaPduProtobufCodec,
-      receiveBuffers).withDeploy(Deploy.local),
+      receiveBuffers)).withDeploy(Deploy.local),
       "reliableEndpointWriter-" + AddressUrlEncoder(remoteAddress) + "-" + endpointId.next()))
-    else context.watch(context.actorOf(EndpointWriter.props(
+    else context.watch(context.actorOf(RARP(extendedSystem).configureDispatcher(EndpointWriter.props(
       handleOption,
       localAddress,
       remoteAddress,
@@ -665,7 +677,7 @@ private[remote] class EndpointManager(conf: Config, log: LoggingAdapter) extends
       endpointSettings,
       AkkaPduProtobufCodec,
       receiveBuffers,
-      reliableDeliverySupervisor = None).withDeploy(Deploy.local),
+      reliableDeliverySupervisor = None)).withDeploy(Deploy.local),
       "endpointWriter-" + AddressUrlEncoder(remoteAddress) + "-" + endpointId.next()))
   }
 

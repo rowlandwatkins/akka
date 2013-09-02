@@ -204,11 +204,10 @@ class RemotingSpec extends AkkaSpec(RemotingSpec.cfg) with ImplicitSender with D
       expectMsg(("pong", testActor))
     }
 
-    "send error message for wrong address" in {
-      filterEvents(EventFilter.error(start = "AssociationError", occurrences = 1),
-        EventFilter.error(pattern = "Address is now quarantined", occurrences = 1)) {
-          system.actorFor("akka.test://nonexistingsystem@localhost:12346/user/echo") ! "ping"
-        }
+    "send warning message for wrong address" in {
+      filterEvents(EventFilter.warning(pattern = "Address is now quarantined", occurrences = 1)) {
+        system.actorFor("akka.test://nonexistingsystem@localhost:12346/user/echo") ! "ping"
+      }
     }
 
     "support ask" in {
@@ -501,6 +500,9 @@ class RemotingSpec extends AkkaSpec(RemotingSpec.cfg) with ImplicitSender with D
 
     "be able to serialize a local actor ref from another actor system" in {
       val config = ConfigFactory.parseString("""
+        # Additional internal serialization verification need so be off, otherwise it triggers two error messages
+        # instead of one: one for the internal check, and one for the actual remote send -- tripping off this test
+        akka.actor.serialize-messages = off
         akka.remote.enabled-transports = ["akka.remote.test", "akka.remote.netty.tcp"]
         akka.remote.test.local-address = "test://other-system@localhost:12347"
       """).withFallback(remoteSystem.settings.config)

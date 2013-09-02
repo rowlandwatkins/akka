@@ -164,10 +164,10 @@ another child to the same parent an `InvalidActorNameException` is thrown.
 
 Actors are automatically started asynchronously when created.
 
-Creating Actors with Factory Methods
-------------------------------------
+Dependency Injection
+--------------------
 
-If your UntypedActor has a constructor that takes parameters then those need to
+If your Actor has a constructor that takes parameters then those need to
 be part of the :class:`Props` as well, as described `above`__. But there
 are cases when a factory method must be used, for example when the actual
 constructor arguments are determined by a dependency injection framework.
@@ -187,6 +187,12 @@ __ Props_
 
   When using a dependency injection framework, actor beans *MUST NOT* have
   singleton scope.
+
+Techniques for dependency injection and integration with dependency injection frameworks
+are described in more depth in the 
+`Using Akka with Dependency Injection <http://letitcrash.com/post/55958814293/akka-dependency-injection>`_ 
+guideline and the `Akka Java Spring <http://typesafe.com/activator/template/akka-java-spring>`_ tutorial
+in Typesafe Activator.
 
 The Actor DSL
 -------------
@@ -363,7 +369,9 @@ occupying it. ``ActorSelection`` cannot be watched for this reason. It is
 possible to resolve the current incarnation's ``ActorRef`` living under the
 path by sending an ``Identify`` message to the ``ActorSelection`` which
 will be replied to with an ``ActorIdentity`` containing the correct reference
-(see :ref:`actorSelection-scala`).
+(see :ref:`actorSelection-scala`). This can also be done with the ``resolveOne`` 
+method of the :class:`ActorSelection`, which returns a ``Future`` of the matching
+:class:`ActorRef`.
 
 .. _deathwatch-scala:
 
@@ -509,6 +517,12 @@ negative result is generated. Please note that this does not mean that delivery
 of that reply is guaranteed, it still is a normal message.
 
 .. includecode:: code/docs/actor/ActorDocSpec.scala#identify
+
+You can also acquire an :class:`ActorRef` for an :class:`ActorSelection` with
+the ``resolveOne`` method of the :class:`ActorSelection`. It returns a ``Future`` 
+of the matching :class:`ActorRef` if such an actor exists. It is completed with 
+failure [[akka.actor.ActorNotFound]] if no such actor exists or the identification
+didn't complete within the supplied `timeout`.
 
 Remote actor addresses may also be looked up, if :ref:`remoting <remoting-scala>` is enabled:
 

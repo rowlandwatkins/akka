@@ -14,7 +14,7 @@ import scala.concurrent.{ Await, Awaitable, Future, Promise, ExecutionContext }
 import scala.util.control.NonFatal
 import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext
-import org.scalatest.junit.JUnitSuite
+import org.scalatest.junit.JUnitSuiteLike
 import scala.runtime.NonLocalReturnControl
 import akka.pattern.ask
 import java.lang.{ IllegalStateException, ArithmeticException }
@@ -49,9 +49,12 @@ object FutureSpec {
         sender ! Status.Failure(new RuntimeException("Expected exception; to test fault-tolerance"))
     }
   }
+
+  case class Req[T](req: T)
+  case class Res[T](res: T)
 }
 
-class JavaFutureSpec extends JavaFutureTests with JUnitSuite
+class JavaFutureSpec extends JavaFutureTests with JUnitSuiteLike
 
 @org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class FutureSpec extends AkkaSpec with Checkers with BeforeAndAfterAll with DefaultTimeout {
@@ -268,8 +271,6 @@ class FutureSpec extends AkkaSpec with Checkers with BeforeAndAfterAll with Defa
 
       "support pattern matching within a for-comprehension" in {
         filterException[NoSuchElementException] {
-          case class Req[T](req: T)
-          case class Res[T](res: T)
           val actor = system.actorOf(Props(new Actor {
             def receive = {
               case Req(s: String) ⇒ sender ! Res(s.length)

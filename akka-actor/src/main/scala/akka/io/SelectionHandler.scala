@@ -54,7 +54,7 @@ private[io] trait ChannelRegistry {
  * a result of it having called `register` on the `ChannelRegistry`.
  * Enables a channel actor to directly schedule interest setting tasks to the selector mgmt. dispatcher.
  */
-private[io] trait ChannelRegistration {
+private[io] trait ChannelRegistration extends NoSerializationVerificationNeeded {
   def enableInterest(op: Int)
   def disableInterest(op: Int)
 }
@@ -66,8 +66,9 @@ private[io] object SelectionHandler {
   }
 
   case class WorkerForCommand(apiCommand: HasFailureMessage, commander: ActorRef, childProps: ChannelRegistry ⇒ Props)
+    extends NoSerializationVerificationNeeded
 
-  case class Retry(command: WorkerForCommand, retriesLeft: Int) { require(retriesLeft >= 0) }
+  case class Retry(command: WorkerForCommand, retriesLeft: Int) extends NoSerializationVerificationNeeded { require(retriesLeft >= 0) }
 
   case object ChannelConnectable
   case object ChannelAcceptable
@@ -93,8 +94,8 @@ private[io] object SelectionHandler {
    */
   private[io] final val connectionSupervisorStrategy: SupervisorStrategy =
     new OneForOneStrategy()(SupervisorStrategy.stoppingStrategy.decider) {
-      override protected def logFailure(context: ActorContext, child: ActorRef, cause: Throwable,
-                                        decision: SupervisorStrategy.Directive): Unit =
+      override def logFailure(context: ActorContext, child: ActorRef, cause: Throwable,
+                              decision: SupervisorStrategy.Directive): Unit =
         if (cause.isInstanceOf[DeathPactException]) {
           try context.system.eventStream.publish {
             Logging.Debug(child.path.toString, getClass, "Closed after handler termination")
@@ -252,8 +253,8 @@ private[io] class SelectionHandler(settings: SelectionHandlerSettings) extends A
       case _: Exception ⇒ SupervisorStrategy.Stop
     }
     new OneForOneStrategy()(stoppingDecider) {
-      override protected def logFailure(context: ActorContext, child: ActorRef, cause: Throwable,
-                                        decision: SupervisorStrategy.Directive): Unit =
+      override def logFailure(context: ActorContext, child: ActorRef, cause: Throwable,
+                              decision: SupervisorStrategy.Directive): Unit =
         try {
           val logMessage = cause match {
             case e: ActorInitializationException if e.getCause ne null ⇒ e.getCause.getMessage
